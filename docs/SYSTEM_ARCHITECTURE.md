@@ -334,9 +334,10 @@ vector_store:
   collection_name: "documents"
   
 llm:
-  backend: "mlx"  # or "llama_cpp"
+  backend: "mlx"  # Use MLX for Apple Silicon M-series
   model: "gemma-3-27b"
   max_tokens: 2048
+  quantization: 4  # Essential for 48GB RAM compatibility
 ```
 
 ## 8. Security Architecture
@@ -356,11 +357,11 @@ llm:
 ## 9. Performance Architecture
 
 ### 9.1 Performance Targets
-- **Query Response**: < 3 seconds average
+- **Query Response**: < 3 seconds average (Apple Silicon M-series optimal)
 - **Document Processing**: < 30 seconds per 100-page PDF
-- **Concurrent Users**: 10+ simultaneous users
-- **Memory Usage**: < 8GB RAM for typical workloads
-- **Storage**: Efficient vector compression
+- **Concurrent Users**: 5-10+ simultaneous users (depending on available RAM)
+- **Memory Usage**: 25-35GB RAM for typical workloads (includes Gemma 3 27B + full system)
+- **Storage**: Efficient vector compression with configurable index sizes
 
 ### 9.2 Optimization Strategies
 - **Async Processing**: Non-blocking operations throughout
@@ -368,6 +369,13 @@ llm:
 - **Batch Operations**: GPU-optimized batch processing
 - **Model Quantization**: 4-bit/8-bit quantization options
 - **Progressive Loading**: Lazy loading of large components
+
+### 9.3 Apple Silicon Optimization (M1/M2/M3/M4)
+- **MLX Backend**: Native Apple Silicon inference with unified memory architecture
+- **Memory Efficiency**: 4-bit quantization reduces Gemma 3 27B from 54GB to 13.5GB
+- **Optimal Configuration**: M4 Pro 48GB ideal for full system with comfortable headroom
+- **Performance**: ~25-30 tokens/second inference on M4 Pro
+- **Power Efficiency**: Significantly lower power consumption vs. discrete GPU solutions
 
 ## 10. Scalability Design
 

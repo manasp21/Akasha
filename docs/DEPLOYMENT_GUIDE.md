@@ -58,21 +58,23 @@ This guide provides comprehensive instructions for deploying the Akasha multimod
 
 | Component | Requirement |
 |-----------|-------------|
-| **CPU** | 4 cores (x86_64 or ARM64) |
-| **RAM** | 8 GB |
-| **Storage** | 50 GB SSD |
-| **GPU** | Optional (improves performance) |
-| **OS** | Linux, macOS, Windows |
+| **CPU** | 8 cores (x86_64 or ARM64) |
+| **RAM** | 32 GB |
+| **Storage** | 100 GB SSD |
+| **GPU** | Optional (Apple Silicon recommended) |
+| **OS** | Linux, macOS 13+, Windows 11 |
+
+**Note**: Gemma 3 27B with 4-bit quantization requires ~13.5GB RAM alone. Additional memory needed for JINA v4 embeddings (~3GB), vector storage (~5-10GB), system overhead (~8-12GB), and application processes (~3-5GB).
 
 ### 2.2 Recommended Requirements
 
 | Component | Requirement |
 |-----------|-------------|
-| **CPU** | 8+ cores (x86_64 or ARM64) |
-| **RAM** | 16+ GB |
-| **Storage** | 200+ GB NVMe SSD |
-| **GPU** | NVIDIA GPU with 8+ GB VRAM |
-| **OS** | Ubuntu 20.04+, macOS 12+, Windows 11 |
+| **CPU** | 12+ cores (Apple Silicon M-series preferred) |
+| **RAM** | 48+ GB (64+ GB for large deployments) |
+| **Storage** | 500+ GB NVMe SSD |
+| **GPU** | Apple Silicon (M1/M2/M3/M4) or NVIDIA GPU with 12+ GB VRAM |
+| **OS** | macOS 13+ (for Apple Silicon), Ubuntu 22.04+, Windows 11 |
 
 ### 2.3 Software Dependencies
 
@@ -84,28 +86,99 @@ This guide provides comprehensive instructions for deploying the Akasha multimod
 
 ### 2.4 Hardware Recommendations by Use Case
 
-#### Development Environment
-- **CPU**: 4-8 cores
-- **RAM**: 8-16 GB
-- **Storage**: 50-100 GB
-- **GPU**: Optional
+#### Development Environment (Single Developer)
+- **CPU**: 8-12 cores (Apple Silicon M-series preferred)
+- **RAM**: 32-48 GB
+- **Storage**: 200-500 GB NVMe SSD
+- **GPU**: Apple Silicon M1/M2/M3/M4 (optimal) or NVIDIA GPU with 8+ GB VRAM
 
 #### Small Production (<1000 documents)
-- **CPU**: 8-16 cores
-- **RAM**: 16-32 GB
-- **Storage**: 200-500 GB
-- **GPU**: NVIDIA GPU with 8+ GB VRAM
+- **CPU**: 12-16 cores
+- **RAM**: 48-64 GB
+- **Storage**: 500-1000 GB NVMe SSD
+- **GPU**: Apple Silicon M-series or NVIDIA GPU with 12+ GB VRAM
 
 #### Large Production (>10,000 documents)
 - **CPU**: 16+ cores
-- **RAM**: 32+ GB
-- **Storage**: 1+ TB NVMe SSD
-- **GPU**: Multiple GPUs or high-end GPU
+- **RAM**: 64+ GB (128+ GB for massive collections)
+- **Storage**: 2+ TB NVMe SSD
+- **GPU**: Multiple Apple Silicon devices or high-end NVIDIA GPUs
 - **Network**: 10 Gbps+
+
+### 2.5 Apple Silicon Optimization Notes
+
+For optimal performance on Apple Silicon (M1/M2/M3/M4):
+- **MLX Backend**: Automatically selected for local LLM inference
+- **Unified Memory**: Efficient sharing between CPU and GPU workloads
+- **4-bit Quantization**: Reduces Gemma 3 27B from 54GB to ~13.5GB
+- **Recommended RAM**: 48GB+ for comfortable operation with full feature set
 
 ---
 
-## 3. Quick Start
+## 3. Apple Silicon M4 Pro Optimized Setup
+
+### 3.1 M4 Pro 48GB Recommended Configuration
+
+For optimal performance on M4 Pro with 48GB unified memory:
+
+```yaml
+# akasha-m4pro.yaml
+system:
+  environment: "production"
+  max_memory_gb: 40  # Leave 8GB for macOS
+
+llm:
+  backend: "mlx"
+  model: "gemma-3-27b"
+  quantization_bits: 4
+  max_tokens: 2048
+  memory_limit_gb: 16
+
+embedding:
+  model: "jina-v4"
+  backend: "local"
+  batch_size: 16
+  memory_limit_gb: 4
+
+vector_store:
+  backend: "chroma"
+  memory_limit_gb: 8
+  cache_size_gb: 4
+
+cache:
+  memory_limit_gb: 6
+  enable_disk_cache: true
+```
+
+### 3.2 Docker Compose for M4 Pro
+
+```yaml
+# docker-compose.m4pro.yml
+version: '3.8'
+services:
+  akasha:
+    image: akasha:latest
+    platform: linux/arm64
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config/akasha-m4pro.yaml:/app/config/akasha.yaml
+      - ./data:/app/data
+      - ./models:/app/models
+    environment:
+      - AKASHA_CONFIG=/app/config/akasha.yaml
+      - PYTORCH_ENABLE_MPS_FALLBACK=1
+    deploy:
+      resources:
+        limits:
+          memory: 40G
+        reservations:
+          memory: 32G
+```
+
+---
+
+## 4. Quick Start
 
 ### 3.1 Docker Compose (Recommended)
 

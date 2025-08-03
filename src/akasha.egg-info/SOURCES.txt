@@ -1,0 +1,11 @@
+README.md
+pyproject.toml
+src/akasha.egg-info/PKG-INFO
+src/akasha.egg-info/SOURCES.txt
+src/akasha.egg-info/dependency_links.txt
+src/akasha.egg-info/entry_points.txt
+src/akasha.egg-info/requires.txt
+src/akasha.egg-info/top_level.txt
+src/api/__init__.py
+src/core/__init__.py
+src/plugins/__init__.py

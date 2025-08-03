@@ -1,0 +1,114 @@
+# Akasha Development Docker Compose
+# Optimized for Apple Silicon M4 Pro 48GB
+
+version: '3.8'
+
+services:
+  akasha:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platforms:
+        - linux/arm64
+    container_name: akasha-api
+    ports:
+      - "8000:8000"
+      - "9090:9090"  # Metrics port
+    volumes:
+      # Application code (for development hot-reload)
+      - ./src:/app/src
+      - ./config:/app/config
+      
+      # Data persistence
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./models:/app/models
+      - ./plugins:/app/plugins
+      
+      # Configuration
+      - ./config/akasha.yaml:/app/config/akasha.yaml
+    environment:
+      - AKASHA_CONFIG=/app/config/akasha.yaml
+      - AKASHA_SYSTEM__ENVIRONMENT=development
+      - AKASHA_SYSTEM__DEBUG=true
+      - PYTHONPATH=/app
+    deploy:
+      resources:
+        limits:
+          memory: 8G  # Conservative limit for development
+        reservations:
+          memory: 4G
+    restart: unless-stopped
+    networks:
+      - akasha-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: akasha-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+    restart: unless-stopped
+    networks:
+      - akasha-network
+
+  # Optional: ChromaDB service (can also run embedded)
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: akasha-chromadb
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma-data:/chroma/chroma
+    environment:
+      - CHROMA_SERVER_HOST=0.0.0.0
+      - CHROMA_SERVER_HTTP_PORT=8000
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+    restart: unless-stopped
+    networks:
+      - akasha-network
+
+  # Development tools container
+  dev-tools:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: akasha-dev-tools
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    command: ["sleep", "infinity"]  # Keep container running for development
+    environment:
+      - PYTHONPATH=/workspace
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    profiles:
+      - dev  # Only start with --profile dev
+    networks:
+      - akasha-network
+
+networks:
+  akasha-network:
+    driver: bridge
+    name: akasha-network
+
+volumes:
+  redis-data:
+    driver: local
+  chroma-data:
+    driver: local

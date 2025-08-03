@@ -1,0 +1,88 @@
+# Akasha Configuration - Optimized for Apple Silicon M4 Pro 48GB
+# This configuration is specifically tuned for optimal performance on M4 Pro
+
+system:
+  name: "akasha"
+  version: "0.1.0"
+  environment: "development"
+  debug: true
+  max_memory_gb: 40  # Leave 8GB for macOS
+
+api:
+  host: "127.0.0.1"
+  port: 8000
+  workers: 1
+  reload: true
+  cors_origins: ["*"]
+  max_request_size: 104857600  # 100MB
+
+llm:
+  backend: "mlx"  # Optimal for Apple Silicon
+  model_name: "gemma-3-27b"
+  model_path: "./models"
+  quantization_bits: 4  # Essential for 48GB compatibility
+  max_tokens: 2048
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 40
+  memory_limit_gb: 16  # Gemma 3 27B with 4-bit quantization
+
+embedding:
+  model: "jina-v4"
+  backend: "local"
+  dimensions: 512
+  batch_size: 16  # Optimized for M4 Pro memory bandwidth
+  memory_limit_gb: 4
+  cache_embeddings: true
+
+vector_store:
+  backend: "chroma"  # Simple setup for development
+  collection_name: "documents"
+  memory_limit_gb: 8
+  cache_size_gb: 4
+  persist_directory: "./data/vectors"
+
+ingestion:
+  backend: "mineru2"
+  batch_size: 4
+  max_file_size_mb: 100
+  enable_ocr: true
+  extract_images: true
+  extract_tables: true
+  output_format: "markdown"
+  temp_directory: "./data/temp"
+
+cache:
+  memory_limit_gb: 6
+  enable_disk_cache: true
+  cache_directory: "./data/cache"
+  ttl_seconds: 3600
+  max_entries: 10000
+
+logging:
+  level: "DEBUG"
+  format: "structured"
+  output: "console"
+  file_path: "./logs/akasha.log"
+  max_file_size_mb: 10
+  backup_count: 5
+
+security:
+  jwt_secret_key: "dev-secret-key-change-in-production"
+  jwt_algorithm: "HS256"
+  jwt_expire_minutes: 60  # Longer for development
+  api_key_length: 32
+  bcrypt_rounds: 12
+
+plugins:
+  plugin_directory: "./plugins"
+  enable_hot_reload: true
+  max_plugins: 50
+  sandbox_enabled: true
+  timeout_seconds: 30
+
+monitoring:
+  enable_metrics: true
+  metrics_port: 9090
+  health_check_interval: 30
+  performance_logging: true

@@ -5,17 +5,28 @@ This module provides the core RAG functionality including document ingestion,
 embedding generation, vector storage, and retrieval for the Akasha system.
 """
 
-from .ingestion import DocumentIngestion, DocumentChunk
-from .embeddings import EmbeddingGenerator
-from .storage import VectorStore
-from .retrieval import DocumentRetriever
-from .pipeline import RAGPipeline
+from .ingestion import DocumentIngestion, DocumentChunk, DocumentMetadata, ChunkingConfig
+from .embeddings import EmbeddingGenerator, EmbeddingConfig
+from .storage import VectorStore, StorageConfig, SearchResult
+from .retrieval import DocumentRetriever, RetrievalConfig, RetrievalResult
+from .pipeline import RAGPipeline, RAGPipelineConfig, QueryResult, IngestionResult, QueryMode
 
 __all__ = [
     "DocumentIngestion",
-    "DocumentChunk", 
+    "DocumentChunk",
+    "DocumentMetadata",
+    "ChunkingConfig",
     "EmbeddingGenerator",
+    "EmbeddingConfig",
     "VectorStore",
+    "StorageConfig", 
+    "SearchResult",
     "DocumentRetriever",
-    "RAGPipeline"
+    "RetrievalConfig",
+    "RetrievalResult",
+    "RAGPipeline",
+    "RAGPipelineConfig",
+    "QueryResult",
+    "IngestionResult",
+    "QueryMode"
 ]

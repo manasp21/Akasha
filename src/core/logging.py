@@ -254,6 +254,14 @@ class PerformanceLogger:
                 duration=duration,
                 **self.context
             )
+    
+    async def __aenter__(self):
+        """Async context manager entry."""
+        return self.__enter__()
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        return self.__exit__(exc_type, exc_val, exc_tb)
 
 
 def log_function_call(func_name: str = None):

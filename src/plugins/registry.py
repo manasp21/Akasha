@@ -10,7 +10,6 @@ import hashlib
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
-from dataclasses import asdict
 from datetime import datetime, timezone
 
 from ..core.config import get_config
@@ -41,7 +40,7 @@ class PluginRegistryEntry:
     def to_dict(self) -> Dict[str, Any]:
         """Convert entry to dictionary."""
         return {
-            "metadata": asdict(self.metadata),
+            "metadata": self.metadata.model_dump(),
             "file_path": self.file_path,
             "file_hash": self.file_hash,
             "install_date": self.install_date.isoformat(),
@@ -215,17 +214,9 @@ class PluginRegistry:
             existing_version = self._entries[plugin_name].metadata.version
             new_version = metadata.version
             
-            if existing_version == new_version:
-                self.logger.info(
-                    "Plugin already registered with same version",
-                    plugin_name=plugin_name,
-                    version=existing_version
-                )
-                return True
-            
             raise PluginError(
                 f"Plugin {plugin_name} already exists with version {existing_version}. "
-                f"Use force_update=True to update to version {new_version}"
+                f"Use force_update=True to register version {new_version}"
             )
         
         # Validate plugin file

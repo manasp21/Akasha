@@ -157,6 +157,29 @@ def setup_middleware(app: FastAPI, config: AkashaConfig) -> None:
 def setup_error_handlers(app: FastAPI) -> None:
     """Set up error handlers for the FastAPI application."""
     
+    logger.debug("Setting up error handlers")
+    
+    # Add a catch-all route for 404s
+    @app.middleware("http")
+    async def catch_404_middleware(request: Request, call_next):
+        response = await call_next(request)
+        if response.status_code == 404:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "success": False,
+                    "error": {
+                        "code": "HTTP_404",
+                        "message": "Not Found"
+                    },
+                    "metadata": {
+                        "timestamp": time.time(),
+                        "path": request.url.path
+                    }
+                }
+            )
+        return response
+    
     @app.exception_handler(AkashaError)
     async def akasha_error_handler(request: Request, exc: AkashaError):
         """Handle custom Akasha errors."""

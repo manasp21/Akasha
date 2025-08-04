@@ -8,7 +8,7 @@ maintaining security and isolation.
 
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional, Type, Union, AsyncIterator
 from dataclasses import dataclass
 from enum import Enum
 
@@ -41,14 +41,13 @@ class PluginStatus(str, Enum):
     DISABLED = "disabled"
 
 
-@dataclass
-class PluginCapability:
+class PluginCapability(BaseModel):
     """Represents a capability that a plugin provides."""
-    name: str
-    description: str
-    input_types: List[str]
-    output_types: List[str]
-    parameters: Dict[str, Any]
+    name: str = Field(..., description="Capability name")
+    description: str = Field(..., description="Capability description")
+    input_types: List[str] = Field(..., description="Supported input types")
+    output_types: List[str] = Field(..., description="Supported output types")
+    parameters: Dict[str, Any] = Field(default_factory=dict, description="Capability parameters")
 
 
 class PluginMetadata(BaseModel):

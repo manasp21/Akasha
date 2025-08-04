@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import yaml
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from pydantic_settings import BaseSettings
 
 
@@ -24,7 +24,8 @@ class SystemConfig(BaseModel):
     debug: bool = Field(default=True, description="Enable debug mode")
     max_memory_gb: int = Field(default=40, description="Maximum memory usage in GB (for M4 Pro 48GB)")
     
-    @validator("environment")
+    @field_validator("environment")
+    @classmethod
     def validate_environment(cls, v):
         valid_envs = ["development", "production", "testing"]
         if v not in valid_envs:
@@ -42,7 +43,8 @@ class APIConfig(BaseModel):
     cors_origins: List[str] = Field(default=["*"], description="CORS allowed origins")
     max_request_size: int = Field(default=100 * 1024 * 1024, description="Max request size in bytes (100MB)")
     
-    @validator("port")
+    @field_validator("port")
+    @classmethod
     def validate_port(cls, v):
         if not 1 <= v <= 65535:
             raise ValueError("Port must be between 1 and 65535")
@@ -62,14 +64,16 @@ class LLMConfig(BaseModel):
     top_k: int = Field(default=40, description="Top-k sampling")
     memory_limit_gb: int = Field(default=16, description="Memory limit for LLM in GB")
     
-    @validator("backend")
+    @field_validator("backend")
+    @classmethod
     def validate_backend(cls, v):
         valid_backends = ["mlx", "llama_cpp"]
         if v not in valid_backends:
             raise ValueError(f"Backend must be one of {valid_backends}")
         return v
     
-    @validator("quantization_bits")
+    @field_validator("quantization_bits")
+    @classmethod
     def validate_quantization(cls, v):
         valid_bits = [4, 8, 16]
         if v not in valid_bits:
@@ -87,7 +91,8 @@ class EmbeddingConfig(BaseModel):
     memory_limit_gb: int = Field(default=4, description="Memory limit for embeddings in GB")
     cache_embeddings: bool = Field(default=True, description="Enable embedding caching")
     
-    @validator("dimensions")
+    @field_validator("dimensions")
+    @classmethod
     def validate_dimensions(cls, v):
         if v <= 0:
             raise ValueError("Dimensions must be positive")
@@ -103,7 +108,8 @@ class VectorStoreConfig(BaseModel):
     cache_size_gb: int = Field(default=4, description="Cache size in GB")
     persist_directory: str = Field(default="./data/vectors", description="Persistence directory")
     
-    @validator("backend")
+    @field_validator("backend")
+    @classmethod
     def validate_backend(cls, v):
         valid_backends = ["chroma", "qdrant"]
         if v not in valid_backends:
@@ -144,7 +150,8 @@ class LoggingConfig(BaseModel):
     max_file_size_mb: int = Field(default=10, description="Maximum log file size in MB")
     backup_count: int = Field(default=5, description="Number of backup files")
     
-    @validator("level")
+    @field_validator("level")
+    @classmethod
     def validate_level(cls, v):
         valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
         if v.upper() not in valid_levels:
@@ -201,10 +208,11 @@ class AkashaConfig(BaseSettings):
     plugins: PluginConfig = Field(default_factory=PluginConfig)
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
     
-    class Config:
-        env_prefix = "AKASHA_"
-        env_nested_delimiter = "__"
-        case_sensitive = False
+    model_config = ConfigDict(
+        env_prefix="AKASHA_",
+        env_nested_delimiter="__",
+        case_sensitive=False
+    )
 
     @classmethod
     def from_yaml(cls, config_path: Union[str, Path]) -> "AkashaConfig":
@@ -248,7 +256,7 @@ class AkashaConfig(BaseSettings):
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
-        config_dict = self.dict()
+        config_dict = self.model_dump()
         
         with open(output_path, 'w', encoding='utf-8') as f:
             yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)

@@ -474,7 +474,7 @@ class PluginManager:
             "author": metadata.author,
             "type": metadata.plugin_type.value,
             "status": plugin.status.value,
-            "capabilities": [cap.dict() for cap in metadata.capabilities],
+            "capabilities": [cap.model_dump() for cap in metadata.capabilities],
             "config": plugin.config,
             "statistics": {
                 **stats,

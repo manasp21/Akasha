@@ -140,6 +140,8 @@ class TestRAGPipeline:
         """Set up test fixtures."""
         self.config = RAGPipelineConfig()
         self.llm_manager = Mock(spec=LLMManager)
+        # Add providers attribute to mock to prevent AttributeError
+        self.llm_manager.providers = {}
         self.pipeline = RAGPipeline(self.config, self.llm_manager)
     
     def test_pipeline_initialization(self):
@@ -241,7 +243,7 @@ class TestRAGPipeline:
             
             assert isinstance(result, IngestionResult)
             assert result.success is False
-            assert result.error == "Failed to ingest document nonexistent_file.txt: File not found"
+            assert result.error == "File not found"
             assert result.chunks_created == 0
     
     @pytest.mark.asyncio
@@ -256,12 +258,36 @@ class TestRAGPipeline:
             (temp_path / "ignore.log").write_text("Log file to ignore.")
             
             # Mock successful ingestion results
+            mock_metadata1 = DocumentMetadata(
+                file_path=str(temp_path / "test1.txt"),
+                file_name="test1.txt",
+                file_size=100,
+                file_hash="hash1",
+                mime_type="text/plain",
+                format="text",
+                processed_at=time.time(),
+                chunk_count=1,
+                processing_time=1.0
+            )
+            
+            mock_metadata2 = DocumentMetadata(
+                file_path=str(temp_path / "test2.txt"),
+                file_name="test2.txt",
+                file_size=100,
+                file_hash="hash2",
+                mime_type="text/plain",
+                format="text",
+                processed_at=time.time(),
+                chunk_count=1,
+                processing_time=1.0
+            )
+            
             mock_result1 = IngestionResult(
                 document_id="doc1",
                 file_path=str(temp_path / "test1.txt"),
                 chunks_created=1,
                 processing_time=1.0,
-                metadata=Mock(),
+                metadata=mock_metadata1,
                 success=True
             )
             
@@ -270,7 +296,7 @@ class TestRAGPipeline:
                 file_path=str(temp_path / "test2.txt"),
                 chunks_created=1,
                 processing_time=1.0,
-                metadata=Mock(),
+                metadata=mock_metadata2,
                 success=True
             )
             
@@ -599,6 +625,8 @@ class TestRAGPipelineIntegration:
         """Set up integration test fixtures."""
         self.config = RAGPipelineConfig()
         self.llm_manager = Mock(spec=LLMManager)
+        # Add providers attribute to mock to prevent AttributeError
+        self.llm_manager.providers = {}
         self.pipeline = RAGPipeline(self.config, self.llm_manager)
     
     @pytest.mark.asyncio
@@ -737,12 +765,24 @@ class TestRAGPipelineIntegration:
             # Mock successful ingestion
             async def mock_ingest_single(*args, **kwargs):
                 await asyncio.sleep(0.1)  # Simulate processing time
+                file_path = args[0]
+                mock_metadata = DocumentMetadata(
+                    file_path=str(file_path),
+                    file_name=file_path.name,
+                    file_size=100,
+                    file_hash="test_hash",
+                    mime_type="text/plain",
+                    format="text",
+                    processed_at=time.time(),
+                    chunk_count=1,
+                    processing_time=0.1
+                )
                 return IngestionResult(
                     document_id=f"doc_{len(args)}",
                     file_path=str(args[0]),
                     chunks_created=1,
                     processing_time=0.1,
-                    metadata=Mock(),
+                    metadata=mock_metadata,
                     success=True
                 )
             

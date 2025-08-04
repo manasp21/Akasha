@@ -54,6 +54,7 @@ class EmbeddingConfig:
     normalize_embeddings: bool = True
     cache_embeddings: bool = True
     cache_dir: Optional[str] = None
+    api_key: Optional[str] = None
 
 
 class EmbeddingResult(BaseModel):
@@ -273,11 +274,11 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         
         await self._import_openai()
         
-        # Get API key from environment or config
+        # Get API key from config or environment
         import os
-        self.api_key = os.getenv("OPENAI_API_KEY")
+        self.api_key = self.config.api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
-            raise AkashaError("OpenAI API key not found. Set OPENAI_API_KEY environment variable.")
+            raise AkashaError("OpenAI API key not found. Set OPENAI_API_KEY environment variable or provide api_key in config.")
         
         self.model = self._openai.OpenAI(api_key=self.api_key)
         self.model_loaded = True

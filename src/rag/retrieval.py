@@ -21,6 +21,8 @@ from ..core.exceptions import AkashaError
 from .storage import VectorStore, SearchResult, StorageConfig
 from .embeddings import EmbeddingGenerator, EmbeddingConfig
 from .ingestion import DocumentChunk
+from .query_expansion import QueryExpansionService, QueryExpansionConfig, ExpansionStrategy
+from .cross_encoder import CrossEncoderReranker, CrossEncoderConfig, CrossEncoderModel
 
 
 class RetrievalStrategy(str, Enum):
@@ -58,10 +60,12 @@ class RetrievalConfig:
     initial_top_k: int = 50
     final_top_k: int = 10
     rerank_top_k: int = 20
-    reranking_method: RerankingMethod = RerankingMethod.BM25
+    reranking_method: RerankingMethod = RerankingMethod.CROSS_ENCODER
     min_similarity_threshold: float = 0.3
     max_context_length: int = 4000
     query_expansion: bool = True
+    query_expansion_strategy: ExpansionStrategy = ExpansionStrategy.HYBRID
+    cross_encoder_model: CrossEncoderModel = CrossEncoderModel.MS_MARCO_MINI
     use_query_classification: bool = True
     enable_semantic_chunking: bool = True
     chunk_overlap_penalty: float = 0.1
@@ -81,6 +85,9 @@ class QueryContext(BaseModel):
     intent: str = Field(default="", description="Detected user intent")
     filters: Dict[str, Any] = Field(default_factory=dict, description="Metadata filters")
     session_context: Dict[str, Any] = Field(default_factory=dict, description="Session context")
+    conversation_history: List[Dict[str, Any]] = Field(default_factory=list, description="Previous conversation turns")
+    relevant_documents: List[str] = Field(default_factory=list, description="Previously relevant document IDs")
+    context_boost_terms: List[str] = Field(default_factory=list, description="Terms to boost from context")
 
 
 class RetrievalResult(BaseModel):
@@ -97,10 +104,24 @@ class RetrievalResult(BaseModel):
 class QueryProcessor:
     """Handles query preprocessing and expansion."""
     
-    def __init__(self, config: RetrievalConfig, logger=None):
+    def __init__(self, config: RetrievalConfig, embedding_generator=None, logger=None):
         self.config = config
         self.logger = logger or get_logger(__name__)
+        self.embedding_generator = embedding_generator
         self._stop_words = self._load_stop_words()
+        
+        # Initialize query expansion service
+        expansion_config = QueryExpansionConfig(
+            strategy=config.query_expansion_strategy,
+            max_expansion_terms=5,
+            min_similarity_threshold=0.6,
+            expansion_weight=0.3
+        )
+        self.query_expansion_service = QueryExpansionService(
+            expansion_config, 
+            embedding_generator, 
+            self.logger
+        )
     
     def _load_stop_words(self) -> Set[str]:
         """Load common English stop words."""
@@ -119,11 +140,13 @@ class QueryProcessor:
     async def process_query(self, query: str, context: Dict[str, Any] = None) -> QueryContext:
         """Process and analyze the user query."""
         async with PerformanceLogger("query_processing", self.logger):
-            # Create query context
+            # Create query context with conversation history
             query_context = QueryContext(
                 original_query=query,
                 processed_query=query,
-                session_context=context or {}
+                session_context=context or {},
+                conversation_history=context.get("conversation_history", []) if context else [],
+                relevant_documents=context.get("relevant_documents", []) if context else []
             )
             
             # Clean and normalize query
@@ -139,9 +162,21 @@ class QueryProcessor:
             # Extract named entities (simple implementation)
             query_context.entities = self._extract_entities(query_context.processed_query)
             
-            # Expand query if enabled
+            # Extract contextual information
+            if query_context.conversation_history:
+                query_context.context_boost_terms = await self._extract_context_terms(query_context)
+            
+            # Expand query if enabled (now includes contextual expansion)
             if self.config.query_expansion:
-                query_context.processed_query = await self._expand_query(query_context)
+                expansion_context = {
+                    "keywords": query_context.keywords,
+                    "entities": query_context.entities,
+                    "intent": query_context.intent,
+                    "session_context": query_context.session_context,
+                    "conversation_history": query_context.conversation_history,
+                    "relevant_documents": [{"content": doc_id} for doc_id in query_context.relevant_documents]
+                }
+                query_context.processed_query = await self._expand_query_with_context(query_context, expansion_context)
             
             # Detect intent
             query_context.intent = self._detect_intent(query_context.processed_query)
@@ -152,7 +187,8 @@ class QueryProcessor:
                 processed_query=query_context.processed_query,
                 query_type=query_context.query_type,
                 keywords=query_context.keywords,
-                intent=query_context.intent
+                intent=query_context.intent,
+                context_terms=query_context.context_boost_terms
             )
             
             return query_context
@@ -254,37 +290,70 @@ class QueryProcessor:
         
         return entities
     
+    async def _extract_context_terms(self, query_context: QueryContext) -> List[str]:
+        """Extract relevant terms from conversation history for boosting."""
+        context_terms = []
+        
+        # Extract terms from recent conversation history (last 3 turns)
+        recent_history = query_context.conversation_history[-3:]
+        
+        for turn in recent_history:
+            # Extract from previous queries
+            if "query" in turn:
+                prev_query = turn["query"]
+                prev_keywords = self._extract_keywords(prev_query)
+                context_terms.extend(prev_keywords[:3])  # Top 3 keywords per turn
+            
+            # Extract from previous responses (if available)
+            if "response" in turn:
+                response = turn["response"]
+                response_keywords = self._extract_keywords(response)
+                context_terms.extend(response_keywords[:2])  # Top 2 from responses
+        
+        # Remove duplicates and current query terms
+        current_terms = set(query_context.keywords + [query_context.original_query.lower()])
+        context_terms = [term for term in context_terms if term.lower() not in current_terms]
+        
+        # Return unique terms, prioritizing more recent
+        seen = set()
+        unique_terms = []
+        for term in context_terms:
+            if term not in seen and len(unique_terms) < 5:  # Max 5 context terms
+                seen.add(term)
+                unique_terms.append(term)
+        
+        return unique_terms
+    
+    async def _expand_query_with_context(self, query_context: QueryContext, expansion_context: Dict[str, Any]) -> str:
+        """Expand query with contextual information."""
+        # Use the existing query expansion but pass conversation context
+        expanded_result = await self.query_expansion_service.expand_query(
+            query_context.processed_query,
+            strategy=self.config.query_expansion_strategy,
+            context=expansion_context
+        )
+        
+        # Add context boost terms
+        if query_context.context_boost_terms:
+            boost_terms = " ".join(query_context.context_boost_terms)
+            expanded_query = f"{expanded_result.expanded_query} {boost_terms}"
+        else:
+            expanded_query = expanded_result.expanded_query
+        
+        return expanded_query
+    
     async def _expand_query(self, query_context: QueryContext) -> str:
-        """Expand the query with synonyms and related terms."""
-        # Simple query expansion - could be enhanced with Word2Vec, WordNet, etc.
-        expanded_terms = []
-        
-        # Add original query
-        expanded_terms.append(query_context.processed_query)
-        
-        # Add synonyms for key terms (simplified)
-        synonym_map = {
-            "ai": ["artificial intelligence", "machine learning", "ML"],
-            "ml": ["machine learning", "artificial intelligence", "AI"],
-            "nlp": ["natural language processing", "text processing"],
-            "paper": ["document", "research paper", "article", "publication"],
-            "method": ["approach", "technique", "methodology"],
-            "result": ["outcome", "finding", "conclusion"],
-            "analysis": ["evaluation", "assessment", "examination"],
-            "model": ["algorithm", "system", "framework"],
+        """Legacy method - use _expand_query_with_context instead."""
+        # This method is kept for backward compatibility
+        expansion_context = {
+            "keywords": query_context.keywords,
+            "entities": query_context.entities,
+            "intent": query_context.intent,
+            "session_context": query_context.session_context,
+            "conversation_history": query_context.conversation_history,
+            "relevant_documents": [{"content": doc_id} for doc_id in query_context.relevant_documents]
         }
-        
-        for keyword in query_context.keywords:
-            keyword_lower = keyword.lower()
-            if keyword_lower in synonym_map:
-                # Add synonyms as alternative query terms
-                synonyms = synonym_map[keyword_lower]
-                for synonym in synonyms:
-                    if synonym not in query_context.processed_query:
-                        expanded_terms.append(f"{query_context.processed_query} {synonym}")
-        
-        # For now, return the original query (expansion can be improved)
-        return query_context.processed_query
+        return await self._expand_query_with_context(query_context, expansion_context)
     
     def _detect_intent(self, query: str) -> str:
         """Detect user intent from the query."""
@@ -387,14 +456,26 @@ class DocumentRetriever:
         self.config = config or RetrievalConfig()
         self.logger = logger or get_logger(__name__)
         
-        self.query_processor = QueryProcessor(self.config, self.logger)
+        self.query_processor = QueryProcessor(self.config, self.embedding_generator, self.logger)
         self.bm25_ranker = BM25Ranker(self.config.bm25_k1, self.config.bm25_b)
         self.bm25_fitted = False
+        
+        # Initialize cross-encoder reranker
+        cross_encoder_config = CrossEncoderConfig(
+            model_name=self.config.cross_encoder_model,
+            batch_size=16,
+            cache_predictions=True
+        )
+        self.cross_encoder_reranker = CrossEncoderReranker(cross_encoder_config, self.logger)
     
     async def initialize(self) -> None:
         """Initialize the retriever."""
         await self.vector_store.initialize()
         await self.embedding_generator.initialize()
+        
+        # Initialize cross-encoder reranker if using cross-encoder reranking
+        if self.config.reranking_method == RerankingMethod.CROSS_ENCODER:
+            await self.cross_encoder_reranker.initialize()
         
         self.logger.info("Document retriever initialized")
     
@@ -567,6 +648,15 @@ class DocumentRetriever:
             # No reranking, just return top_k
             reranked_chunks = initial_result["chunks"][:top_k]
             reranked_scores = initial_result["scores"][:top_k]
+        elif self.config.reranking_method == RerankingMethod.CROSS_ENCODER:
+            # Cross-encoder reranking
+            rerank_result = await self.cross_encoder_reranker.rerank(
+                query_context.processed_query,
+                initial_result["chunks"][:self.config.rerank_top_k],
+                top_k=top_k
+            )
+            reranked_chunks = rerank_result.reranked_chunks
+            reranked_scores = rerank_result.relevance_scores
         elif self.config.reranking_method == RerankingMethod.BM25:
             # Additional BM25 reranking
             reranked_chunks, reranked_scores = await self._bm25_rerank(
@@ -600,14 +690,22 @@ class DocumentRetriever:
             diverse_chunks = reranked_chunks
             diverse_scores = reranked_scores
         
+        # Stage 4: Contextual boosting based on conversation history
+        final_chunks, final_scores = await self._apply_contextual_boosting(
+            diverse_chunks,
+            diverse_scores,
+            query_context
+        )
+        
         return {
-            "chunks": diverse_chunks,
-            "scores": diverse_scores,
-            "method": f"multi_stage_{self.config.reranking_method}",
+            "chunks": final_chunks,
+            "scores": final_scores,
+            "method": f"multi_stage_{self.config.reranking_method}_contextual",
             "metadata": {
                 "initial_candidates": len(initial_result["chunks"]),
                 "rerank_candidates": min(self.config.rerank_top_k, len(initial_result["chunks"])),
-                "diversity_applied": self.config.diversity_lambda > 0
+                "diversity_applied": self.config.diversity_lambda > 0,
+                "contextual_boosting_applied": len(query_context.context_boost_terms) > 0 or len(query_context.relevant_documents) > 0
             }
         }
     
@@ -733,6 +831,52 @@ class DocumentRetriever:
         
         return intersection / union if union > 0 else 0.0
     
+    async def _apply_contextual_boosting(self, chunks: List[DocumentChunk], 
+                                       scores: List[float],
+                                       query_context: QueryContext) -> Tuple[List[DocumentChunk], List[float]]:
+        """Apply contextual boosting based on conversation history and relevant documents."""
+        if not query_context.context_boost_terms and not query_context.relevant_documents:
+            return chunks, scores
+        
+        boosted_scores = []
+        
+        for chunk, score in zip(chunks, scores):
+            boost_factor = 1.0
+            
+            # Boost based on context terms
+            if query_context.context_boost_terms:
+                chunk_text = chunk.content.lower()
+                context_matches = sum(1 for term in query_context.context_boost_terms 
+                                    if term.lower() in chunk_text)
+                if context_matches > 0:
+                    # Apply moderate boost for context term matches
+                    boost_factor += 0.1 * context_matches
+            
+            # Boost based on previously relevant documents
+            if query_context.relevant_documents and chunk.document_id in query_context.relevant_documents:
+                # Apply stronger boost for chunks from previously relevant documents
+                boost_factor += 0.2
+            
+            # Apply boost to score
+            boosted_score = score * boost_factor
+            boosted_scores.append(boosted_score)
+        
+        # Re-sort by boosted scores
+        scored_chunks = list(zip(chunks, boosted_scores))
+        scored_chunks.sort(key=lambda x: x[1], reverse=True)
+        
+        boosted_chunks = [chunk for chunk, _ in scored_chunks]
+        final_scores = [score for _, score in scored_chunks]
+        
+        self.logger.debug(
+            "Applied contextual boosting",
+            context_terms=len(query_context.context_boost_terms),
+            relevant_docs=len(query_context.relevant_documents),
+            boosted_chunks=sum(1 for s1, s2 in zip(scores, final_scores) if s2 > s1)
+        )
+        
+        return boosted_chunks, final_scores
+    
     async def search_by_document_type(self, query: str, 
                                     document_types: List[str],
                                     top_k: int = None) -> RetrievalResult:
@@ -758,15 +902,24 @@ class DocumentRetriever:
         vector_stats = await self.vector_store.get_stats()
         embedding_info = await self.embedding_generator.get_embedding_info()
         
-        return {
+        stats = {
             "storage": vector_stats,
             "embeddings": embedding_info,
             "config": {
                 "strategy": self.config.strategy,
                 "reranking_method": self.config.reranking_method,
+                "query_expansion_strategy": self.config.query_expansion_strategy,
+                "cross_encoder_model": self.config.cross_encoder_model,
                 "initial_top_k": self.config.initial_top_k,
                 "final_top_k": self.config.final_top_k,
                 "min_similarity_threshold": self.config.min_similarity_threshold
             },
             "bm25_fitted": self.bm25_fitted
         }
+        
+        # Add cross-encoder stats if available
+        if self.config.reranking_method == RerankingMethod.CROSS_ENCODER:
+            cross_encoder_stats = await self.cross_encoder_reranker.get_reranker_stats()
+            stats["cross_encoder"] = cross_encoder_stats
+        
+        return stats

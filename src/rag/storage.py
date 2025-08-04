@@ -568,7 +568,7 @@ class VectorStore:
                 "file_size": metadata.file_size,
                 "file_hash": metadata.file_hash,
                 "mime_type": metadata.mime_type,
-                "format": metadata.format.value,
+                "format": metadata.format.value if hasattr(metadata.format, 'value') else str(metadata.format),
                 "processed_at": metadata.processed_at,
                 "processing_time": metadata.processing_time,
                 "source": metadata.source

@@ -91,3 +91,7 @@ The system is specifically optimized for Apple Silicon M4 Pro with 48GB unified 
 - Maintain comprehensive test coverage (>80% target)
 - Performance optimization is critical for research workflows
 - **Always use MLX backend and 4-bit quantization for Apple Silicon deployment**
+
+## Memory Contexts
+
+- USE CONTEXT7 MCP Whenever you need any documentation for anything

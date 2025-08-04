@@ -4,6 +4,7 @@ Tests for RAG document ingestion system.
 
 import pytest
 import tempfile
+import hashlib
 from pathlib import Path
 from unittest.mock import Mock, patch
 import asyncio
@@ -420,9 +421,10 @@ class TestIngestionIntegration:
             assert total_content_length <= len(test_content) + (len(chunks) * self.chunking_config.chunk_overlap)
             
             # Verify chunk properties
+            expected_doc_id = f"doc_{hashlib.md5(str(file_path).encode()).hexdigest()[:16]}"
             for i, chunk in enumerate(chunks):
                 assert chunk.chunk_index == i
-                assert chunk.document_id == metadata.file_hash[:16]  # Document ID is based on path hash
+                assert chunk.document_id == expected_doc_id  # Document ID is based on path hash
                 assert len(chunk.content) >= self.chunking_config.min_chunk_size
                 assert chunk.start_offset >= 0
                 assert chunk.end_offset > chunk.start_offset

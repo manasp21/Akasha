@@ -43,6 +43,7 @@ class ChunkingStrategy(str, Enum):
 @dataclass
 class DocumentMetadata:
     """Metadata for processed documents."""
+    document_id: str
     file_path: str
     file_name: str
     file_size: int
@@ -436,55 +437,74 @@ class DocumentChunker:
         # Get initial splits
         splits = _split_text_recursive(text, separators)
         
-        # Combine splits to target size with overlap
+        # Combine splits to target size with CHARACTER-BASED overlap
         chunks = []
         current_chunk = []
-        current_size = 0
         chunk_index = 0
-        start_offset = 0
+        text_position = 0  # Track actual position in original text
         
-        for split in splits:
-            split_size = len(split)
+        i = 0
+        while i < len(splits):
+            current_chunk = []
+            current_content = ""
+            chunk_start = text_position
             
-            if current_size + split_size > self.config.chunk_size and current_chunk:
-                # Create chunk
-                chunk_text = '\n'.join(current_chunk).strip()
-                if len(chunk_text) >= self.config.min_chunk_size:
-                    chunk = DocumentChunk(
-                        id="",
-                        content=chunk_text,
-                        document_id=document_id,
-                        chunk_index=chunk_index,
-                        start_offset=start_offset,
-                        end_offset=start_offset + len(chunk_text)
-                    )
-                    chunk.id = chunk.get_id()
-                    chunks.append(chunk)
-                    chunk_index += 1
+            # Build chunk by adding splits until we reach target size
+            while i < len(splits):
+                split = splits[i]
+                # Account for separator when joining (except for first split in chunk)
+                separator_len = 1 if current_chunk else 0  # '\n' separator
                 
-                # Start new chunk with overlap
-                overlap_size = min(self.config.chunk_overlap, len(current_chunk))
-                current_chunk = current_chunk[-overlap_size:] + [split] if overlap_size > 0 else [split]
-                current_size = sum(len(s) for s in current_chunk)
-                start_offset += len(chunk_text) - sum(len(s) for s in current_chunk[:-1])
-            else:
+                if current_content and len(current_content) + separator_len + len(split) > self.config.chunk_size:
+                    break
+                
+                if current_chunk:  # Add separator for non-first splits
+                    current_content += '\n'
+                current_content += split
                 current_chunk.append(split)
-                current_size += split_size
-        
-        # Add final chunk
-        if current_chunk:
-            chunk_text = '\n'.join(current_chunk).strip()
-            if len(chunk_text) >= self.config.min_chunk_size:
+                i += 1
+            
+            # Create chunk if we have content
+            if current_content.strip() and len(current_content.strip()) >= self.config.min_chunk_size:
                 chunk = DocumentChunk(
                     id="",
-                    content=chunk_text,
+                    content=current_content.strip(),
                     document_id=document_id,
                     chunk_index=chunk_index,
-                    start_offset=start_offset,
-                    end_offset=start_offset + len(chunk_text)
+                    start_offset=chunk_start,
+                    end_offset=chunk_start + len(current_content.strip())
                 )
                 chunk.id = chunk.get_id()
                 chunks.append(chunk)
+                chunk_index += 1
+                
+                # Calculate overlap for next chunk (character-based)
+                if i < len(splits) and self.config.chunk_overlap > 0:
+                    # Find how much content to overlap (from end of current chunk)
+                    content_to_overlap = current_content.strip()
+                    overlap_chars = min(self.config.chunk_overlap, len(content_to_overlap))
+                    
+                    if overlap_chars > 0:
+                        # Find where the overlap starts in the original content
+                        overlap_start = len(content_to_overlap) - overlap_chars
+                        overlap_content = content_to_overlap[overlap_start:]
+                        
+                        # Move back in the splits to include overlapping content
+                        # This is a simple approach - we'll go back one split for overlap
+                        if len(current_chunk) > 1:
+                            i -= 1  # Go back one split for overlap
+                            text_position = chunk_start + len(content_to_overlap) - len(splits[i])
+                        else:
+                            text_position = chunk_start + len(content_to_overlap)
+                    else:
+                        text_position = chunk_start + len(content_to_overlap)
+                else:
+                    text_position = chunk_start + len(current_content.strip())
+            else:
+                # Skip empty/too-small content
+                if i < len(splits):
+                    text_position += len(splits[i])
+                    i += 1
         
         return chunks
 
@@ -596,6 +616,7 @@ class DocumentIngestion:
             mime_type, _ = mimetypes.guess_type(str(file_path))
             
             metadata = DocumentMetadata(
+                document_id=document_id,
                 file_path=str(file_path),
                 file_name=file_path.name,
                 file_size=file_stat.st_size,

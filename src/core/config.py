@@ -384,6 +384,9 @@ def load_config(config_path: Optional[Union[str, Path]] = None) -> AkashaConfig:
 # Global configuration instance
 config: Optional[AkashaConfig] = None
 
+# Export main config class for easier imports
+Config = AkashaConfig
+
 
 def get_config() -> AkashaConfig:
     """

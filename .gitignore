@@ -1,0 +1,221 @@
+# Akasha - Comprehensive .gitignore for RAG System
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Model files and caches
+models/
+*.bin
+*.onnx
+*.pt
+*.pth
+*.safetensors
+*.h5
+*.pkl
+*.joblib
+
+# HuggingFace transformers cache
+.cache/
+~/.cache/huggingface/
+huggingface_hub/
+transformers_cache/
+sentence_transformers/
+
+# JINA model cache
+.jina/
+jina_cache/
+
+# MLX models and cache (Apple Silicon)
+mlx_models/
+.mlx_cache/
+
+# Llama.cpp models
+*.gguf
+*.ggml
+llama_models/
+
+# OCR models
+paddleocr/
+easyocr/
+tesseract_models/
+
+# Vector databases
+chroma_db/
+qdrant_data/
+*.index
+*.faiss
+
+# Document uploads and processing
+uploads/
+processed/
+temp/
+tmp/
+
+# Logs
+logs/
+*.log
+*.log.*
+
+# Data files
+data/
+datasets/
+*.csv
+*.json.gz
+*.parquet
+
+# Configuration secrets
+.env.local
+.env.production
+secrets.yaml
+config/production.yaml
+
+# Redis dumps
+dump.rdb
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Monitoring and metrics
+prometheus_data/
+grafana_data/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Compressed files
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Node.js (for frontend)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Build outputs
+.next/
+out/
+build/
+dist/
+
+# Temporary directories
+.tmp/
+.temp/
+tmp-*/
+
+# Large model directories by framework
+# PyTorch
+torch_cache/
+torch_models/
+
+# TensorFlow
+tf_cache/
+tf_models/
+tensorflow_datasets/
+
+# Sentence Transformers
+sentence_transformers_cache/
+
+# CLIP models
+clip_models/
+
+# Embedding caches
+embeddings_cache/
+vector_cache/
+
+# MinerU models and cache
+mineru_models/
+.mineru/
+
+# Whoosh search index
+whoosh_index/
+search_index/
+
+# Additional model storage patterns
+*_model/
+*_models/
+*.model
+*.checkpoint

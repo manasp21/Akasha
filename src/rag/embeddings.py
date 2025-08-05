@@ -40,6 +40,14 @@ class EmbeddingModel(str, Enum):
     E5_SMALL_V2 = "e5-small-v2"
     E5_BASE_V2 = "e5-base-v2"
     E5_LARGE_V2 = "e5-large-v2"
+    # JINA models
+    JINA_V2_BASE = "jinaai/jina-embeddings-v2-base-en"
+    JINA_V2_SMALL = "jinaai/jina-embeddings-v2-small-en"
+    JINA_V3 = "jinaai/jina-embeddings-v3"
+    JINA_V4 = "jinaai/jina-embeddings-v4"
+    # Multimodal models
+    CLIP_VIT_B32 = "openai/clip-vit-base-patch32"
+    CLIP_VIT_L14 = "openai/clip-vit-large-patch14"
 
 
 @dataclass
@@ -55,6 +63,7 @@ class EmbeddingConfig:
     cache_embeddings: bool = True
     cache_dir: Optional[str] = None
     api_key: Optional[str] = None
+    multimodal: bool = False  # Enable multimodal processing
 
 
 class EmbeddingResult(BaseModel):
@@ -84,6 +93,11 @@ class EmbeddingProvider(ABC):
     async def embed_texts(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings for a list of texts."""
         pass
+    
+    async def embed_images(self, image_paths: List[str]) -> List[List[float]]:
+        """Generate embeddings for a list of images."""
+        # Default implementation - override in multimodal providers
+        raise NotImplementedError("Image embedding not supported by this provider")
     
     @abstractmethod
     def get_embedding_dimensions(self) -> int:
@@ -236,6 +250,12 @@ class MLXEmbeddingProvider(EmbeddingProvider):
                 EmbeddingModel.E5_SMALL_V2: 384,
                 EmbeddingModel.E5_BASE_V2: 768,
                 EmbeddingModel.E5_LARGE_V2: 1024,
+                EmbeddingModel.JINA_V2_BASE: 768,
+                EmbeddingModel.JINA_V2_SMALL: 512,
+                EmbeddingModel.JINA_V3: 1024,
+                EmbeddingModel.JINA_V4: 1024,
+                EmbeddingModel.CLIP_VIT_B32: 512,
+                EmbeddingModel.CLIP_VIT_L14: 768,
             }
             return dimensions_map.get(self.config.model_name, 384)
         
@@ -248,6 +268,189 @@ class MLXEmbeddingProvider(EmbeddingProvider):
             # Fallback: encode a dummy text to get dimensions
             dummy_embedding = self.model.encode(["test"], convert_to_numpy=True)
             return dummy_embedding.shape[1]
+
+
+class JINAEmbeddingProvider(EmbeddingProvider):
+    """JINA embedding provider with fallback for different versions."""
+    
+    def __init__(self, config: EmbeddingConfig, logger=None):
+        super().__init__(config, logger)
+        self._sentence_transformers = None
+        self.jina_version = None
+        self.requires_trust_remote_code = True
+    
+    async def _import_sentence_transformers(self):
+        """Lazy import sentence-transformers."""
+        if self._sentence_transformers is None:
+            try:
+                from sentence_transformers import SentenceTransformer
+                self._sentence_transformers = SentenceTransformer
+            except ImportError:
+                raise AkashaError(
+                    "sentence-transformers not installed. Install with: pip install sentence-transformers"
+                )
+    
+    def _detect_jina_version(self, model_name: str) -> str:
+        """Detect JINA model version from model name."""
+        if "jina-v4" in model_name or "jina-embeddings-v4" in model_name:
+            return "v4"
+        elif "jina-v3" in model_name or "jina-embeddings-v3" in model_name:
+            return "v3"
+        elif "jina-v2" in model_name or "jina-embeddings-v2" in model_name:
+            return "v2"
+        else:
+            return "unknown"
+    
+    def _get_fallback_models(self, target_version: str) -> List[str]:
+        """Get fallback models if target version fails."""
+        if target_version == "v4":
+            return [
+                "jinaai/jina-embeddings-v3",
+                "jinaai/jina-embeddings-v2-base-en",
+                "all-MiniLM-L6-v2"  # Ultimate fallback
+            ]
+        elif target_version == "v3":
+            return [
+                "jinaai/jina-embeddings-v2-base-en",
+                "all-MiniLM-L6-v2"
+            ]
+        else:
+            return ["all-MiniLM-L6-v2"]
+    
+    async def load_model(self) -> None:
+        """Load JINA embedding model with fallbacks."""
+        if self.model_loaded:
+            return
+        
+        await self._import_sentence_transformers()
+        
+        model_name = self.config.model_name.value
+        if self.config.model_path:
+            model_name = self.config.model_path
+        
+        self.jina_version = self._detect_jina_version(model_name)
+        
+        # Try to load the requested model first
+        success = await self._try_load_model(model_name)
+        
+        if not success:
+            # Try fallback models
+            fallback_models = self._get_fallback_models(self.jina_version)
+            for fallback_model in fallback_models:
+                self.logger.warning(f"Trying fallback model: {fallback_model}")
+                success = await self._try_load_model(fallback_model)
+                if success:
+                    model_name = fallback_model
+                    self.jina_version = self._detect_jina_version(fallback_model)
+                    break
+        
+        if not success:
+            raise AkashaError(f"Failed to load any JINA embedding model")
+        
+        self.model_loaded = True
+        self.logger.info(
+            "JINA embedding model loaded successfully",
+            model_name=model_name,
+            version=self.jina_version,
+            dimensions=self.get_embedding_dimensions()
+        )
+    
+    async def _try_load_model(self, model_name: str) -> bool:
+        """Try to load a specific model."""
+        try:
+            # Load model in a thread to avoid blocking
+            def _load_model():
+                return self._sentence_transformers(
+                    model_name,
+                    device="mps" if self.config.device == "auto" else self.config.device,
+                    cache_folder=self.config.cache_dir,
+                    trust_remote_code=self.requires_trust_remote_code
+                )
+            
+            self.model = await asyncio.get_event_loop().run_in_executor(None, _load_model)
+            return True
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to load model {model_name}: {e}")
+            
+            # Check for specific dependency errors and log helpful messages
+            error_str = str(e).lower()
+            if "peft" in error_str:
+                self.logger.warning("JINA v4 requires 'peft' package: pip install peft")
+            elif "einops" in error_str:
+                self.logger.warning("JINA v3 requires 'einops' package: pip install einops")
+            elif "trust_remote_code" in error_str:
+                self.logger.warning("Model requires trust_remote_code=True")
+            
+            return False
+    
+    async def embed_texts(self, texts: List[str]) -> List[List[float]]:
+        """Generate embeddings for texts using JINA model."""
+        if not self.model_loaded:
+            await self.load_model()
+        
+        async with PerformanceLogger(f"jina_embed_texts:count_{len(texts)}", self.logger):
+            def _encode_texts():
+                # JINA models work well with sentence-transformers interface
+                embeddings = self.model.encode(
+                    texts,
+                    batch_size=self.config.batch_size,
+                    normalize_embeddings=self.config.normalize_embeddings,
+                    convert_to_numpy=True
+                )
+                return embeddings.tolist()
+            
+            embeddings = await asyncio.get_event_loop().run_in_executor(None, _encode_texts)
+            
+            self.logger.debug(
+                "Generated JINA embeddings",
+                text_count=len(texts),
+                embedding_count=len(embeddings),
+                dimensions=len(embeddings[0]) if embeddings else 0,
+                model_version=self.jina_version
+            )
+            
+            return embeddings
+    
+    def get_embedding_dimensions(self) -> int:
+        """Get embedding dimensions for JINA models."""
+        if not self.model:
+            # Fallback dimensions based on known JINA models
+            dimensions_map = {
+                EmbeddingModel.JINA_V2_BASE: 768,
+                EmbeddingModel.JINA_V2_SMALL: 512,
+                EmbeddingModel.JINA_V3: 1024,
+                EmbeddingModel.JINA_V4: 1024,  # May vary
+            }
+            return dimensions_map.get(self.config.model_name, 768)
+        
+        # Get dimensions from loaded model
+        if hasattr(self.model, 'get_sentence_embedding_dimension'):
+            return self.model.get_sentence_embedding_dimension()
+        else:
+            # Fallback: encode a dummy text to get dimensions
+            dummy_embedding = self.model.encode(["test"], convert_to_numpy=True)
+            return dummy_embedding.shape[1]
+    
+    async def get_model_info(self) -> Dict[str, Any]:
+        """Get detailed information about the loaded JINA model."""
+        if not self.model_loaded:
+            await self.load_model()
+        
+        info = {
+            "provider": "JINA",
+            "version": self.jina_version,
+            "model_name": str(self.config.model_name.value),
+            "dimensions": self.get_embedding_dimensions(),
+            "supports_multimodal": self.jina_version in ["v3", "v4"],
+            "max_sequence_length": getattr(self.model, 'max_seq_length', None),
+        }
+        
+        # Add model-specific capabilities
+        if hasattr(self.model, '_modules'):
+            info["has_vision_model"] = 'vision_model' in str(self.model._modules)
+        
+        return info
 
 
 class OpenAIEmbeddingProvider(EmbeddingProvider):
@@ -324,6 +527,150 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         return 1536  # text-embedding-ada-002 dimensions
 
 
+class MultimodalEmbeddingProvider(EmbeddingProvider):
+    """Multimodal embedding provider using Hugging Face Transformers with CLIP."""
+    
+    def __init__(self, config: EmbeddingConfig, logger=None):
+        super().__init__(config, logger)
+        self._transformers = None
+        self._torch = None
+        self._pil = None
+        self.processor = None
+        
+    async def _import_dependencies(self):
+        """Lazy import dependencies."""
+        if self._transformers is None:
+            try:
+                from transformers import CLIPProcessor, CLIPModel
+                import torch
+                from PIL import Image
+                self._transformers = (CLIPProcessor, CLIPModel)
+                self._torch = torch
+                self._pil = Image
+            except ImportError as e:
+                raise AkashaError(f"Required dependencies not installed: {e}")
+    
+    async def load_model(self) -> None:
+        """Load the multimodal CLIP model."""
+        if self.model_loaded:
+            return
+        
+        await self._import_dependencies()
+        CLIPProcessor, CLIPModel = self._transformers
+        
+        async with PerformanceLogger(f"load_multimodal_model:{self.config.model_name}", self.logger):
+            model_name = self.config.model_name.value
+            if self.config.model_path:
+                model_name = self.config.model_path
+            
+            def _load_model():
+                processor = CLIPProcessor.from_pretrained(model_name)
+                model = CLIPModel.from_pretrained(model_name)
+                
+                # Move to appropriate device
+                device = "mps" if self.config.device == "auto" and self._torch.backends.mps.is_available() else "cpu"
+                model = model.to(device)
+                
+                return processor, model, device
+            
+            self.processor, self.model, self.device = await asyncio.get_event_loop().run_in_executor(
+                None, _load_model
+            )
+            
+            self.model_loaded = True
+            self.logger.info(
+                "Multimodal CLIP model loaded successfully",
+                model_name=model_name,
+                device=self.device,
+                dimensions=self.get_embedding_dimensions()
+            )
+    
+    async def embed_texts(self, texts: List[str]) -> List[List[float]]:
+        """Generate embeddings for texts using CLIP."""
+        if not self.model_loaded:
+            await self.load_model()
+        
+        if not texts:
+            return []
+        
+        async with PerformanceLogger(f"clip_embed_texts:batch_size_{len(texts)}", self.logger):
+            def _encode_texts():
+                inputs = self.processor(text=texts, return_tensors="pt", padding=True, truncation=True)
+                inputs = {k: v.to(self.device) for k, v in inputs.items()}
+                
+                with self._torch.no_grad():
+                    text_features = self.model.get_text_features(**inputs)
+                    
+                if self.config.normalize_embeddings:
+                    text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+                
+                return text_features.cpu().numpy().tolist()
+            
+            embeddings = await asyncio.get_event_loop().run_in_executor(None, _encode_texts)
+            
+            self.logger.debug(
+                "Generated text embeddings with CLIP",
+                text_count=len(texts),
+                embedding_dimensions=len(embeddings[0]) if embeddings else 0
+            )
+            
+            return embeddings
+    
+    async def embed_images(self, image_paths: List[str]) -> List[List[float]]:
+        """Generate embeddings for images using CLIP."""
+        if not self.model_loaded:
+            await self.load_model()
+        
+        if not image_paths:
+            return []
+        
+        async with PerformanceLogger(f"clip_embed_images:batch_size_{len(image_paths)}", self.logger):
+            def _encode_images():
+                # Load images
+                images = []
+                for image_path in image_paths:
+                    try:
+                        image = self._pil.open(image_path).convert('RGB')
+                        images.append(image)
+                    except Exception as e:
+                        self.logger.warning(f"Failed to load image {image_path}: {e}")
+                        # Add a blank image as placeholder
+                        images.append(self._pil.new('RGB', (224, 224), color='white'))
+                
+                if not images:
+                    return []
+                
+                inputs = self.processor(images=images, return_tensors="pt", padding=True)
+                inputs = {k: v.to(self.device) for k, v in inputs.items()}
+                
+                with self._torch.no_grad():
+                    image_features = self.model.get_image_features(**inputs)
+                    
+                if self.config.normalize_embeddings:
+                    image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+                
+                return image_features.cpu().numpy().tolist()
+            
+            embeddings = await asyncio.get_event_loop().run_in_executor(None, _encode_images)
+            
+            self.logger.debug(
+                "Generated image embeddings with CLIP",
+                image_count=len(image_paths),
+                embedding_dimensions=len(embeddings[0]) if embeddings else 0
+            )
+            
+            return embeddings
+    
+    def get_embedding_dimensions(self) -> int:
+        """Get CLIP embedding dimensions."""
+        if self.config.model_name == EmbeddingModel.CLIP_VIT_B32:
+            return 512  # CLIP ViT-B/32 dimensions
+        elif self.config.model_name == EmbeddingModel.CLIP_VIT_L14:
+            return 768  # CLIP ViT-L/14 dimensions
+        else:
+            return 512  # Default CLIP dimensions
+
+
 class EmbeddingGenerator:
     """Main embedding generator with support for multiple backends."""
     
@@ -331,8 +678,14 @@ class EmbeddingGenerator:
         self.config = config or EmbeddingConfig()
         self.logger = logger or get_logger(__name__)
         
-        # Initialize provider based on backend
-        if self.config.backend == EmbeddingBackend.MLX:
+        # Initialize provider based on backend, model, and multimodal setting
+        if self.config.multimodal or self.config.model_name in [EmbeddingModel.CLIP_VIT_B32, EmbeddingModel.CLIP_VIT_L14]:
+            self.provider = MultimodalEmbeddingProvider(self.config, self.logger)
+        elif self.config.model_name in [EmbeddingModel.JINA_V2_BASE, EmbeddingModel.JINA_V2_SMALL, 
+                                       EmbeddingModel.JINA_V3, EmbeddingModel.JINA_V4]:
+            # Use JINA provider for JINA models
+            self.provider = JINAEmbeddingProvider(self.config, self.logger)
+        elif self.config.backend == EmbeddingBackend.MLX:
             self.provider = MLXEmbeddingProvider(self.config, self.logger)
         elif self.config.backend == EmbeddingBackend.OPENAI:
             self.provider = OpenAIEmbeddingProvider(self.config, self.logger)
@@ -434,6 +787,18 @@ class EmbeddingGenerator:
         # For retrieval, we might want to add a query prefix for some models
         # For now, just embed the query as-is
         return await self.embed_text(query)
+    
+    async def embed_images(self, image_paths: List[str]) -> List[List[float]]:
+        """Generate embeddings for images (multimodal only)."""
+        if hasattr(self.provider, 'embed_images'):
+            return await self.provider.embed_images(image_paths)
+        else:
+            raise AkashaError("Image embedding not supported by current provider. Use multimodal configuration.")
+    
+    async def embed_image(self, image_path: str) -> List[float]:
+        """Generate embedding for a single image."""
+        embeddings = await self.embed_images([image_path])
+        return embeddings[0] if embeddings else []
     
     def get_embedding_dimensions(self) -> int:
         """Get embedding dimensions."""

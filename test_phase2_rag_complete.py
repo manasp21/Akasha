@@ -26,7 +26,7 @@ def create_knowledge_base_pdf(filename: str, topic: str, content_sections: dict)
     
     # Title page
     c.setFont("Helvetica-Bold", 16)
-    c.drawCentredText(width/2, height-100, f"Knowledge Base: {topic}")
+    c.drawCentredString(width/2, height-100, f"Knowledge Base: {topic}")
     
     c.setFont("Helvetica", 12)
     y_position = height - 150

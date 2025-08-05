@@ -1,0 +1,108 @@
+# Production Dockerfile for Akasha Backend
+# Multi-stage build optimized for security and performance
+
+# Build stage
+FROM --platform=linux/arm64 python:3.11-slim as builder
+
+# Set environment variables for build
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    POETRY_NO_INTERACTION=1 \
+    POETRY_VENV_IN_PROJECT=1 \
+    POETRY_CACHE_DIR=/tmp/poetry_cache
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    git \
+    libmagic1 \
+    libpoppler-cpp-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Poetry
+RUN pip install poetry==1.7.1
+
+# Set working directory
+WORKDIR /app
+
+# Copy dependency files
+COPY pyproject.toml README.md ./
+
+# Install dependencies
+RUN poetry config virtualenvs.create false && \
+    poetry install --only=main --no-dev && \
+    rm -rf $POETRY_CACHE_DIR
+
+# Production stage
+FROM --platform=linux/arm64 python:3.11-slim as production
+
+# Set production environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONHASHSEED=random \
+    AKASHA_ENVIRONMENT=production \
+    AKASHA_SYSTEM__DEBUG=false
+
+# Install runtime dependencies only
+RUN apt-get update && apt-get install -y \
+    curl \
+    libmagic1 \
+    libpoppler-cpp0v5 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Create non-root user for security
+RUN groupadd -r akasha && \
+    useradd -r -g akasha -d /app -s /bin/bash akasha
+
+# Set working directory
+WORKDIR /app
+
+# Copy Python packages from builder
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Copy application code
+COPY --chown=akasha:akasha src/ ./src/
+COPY --chown=akasha:akasha config/ ./config/
+
+# Create necessary directories with proper permissions
+RUN mkdir -p /app/data/vectors \
+             /app/data/cache \
+             /app/data/temp \
+             /app/logs \
+             /app/uploads \
+             /app/models \
+             /app/plugins && \
+    chown -R akasha:akasha /app && \
+    chmod -R 755 /app
+
+# Copy entrypoint script
+COPY --chown=akasha:akasha docker/entrypoint-prod.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Switch to non-root user
+USER akasha
+
+# Expose port
+EXPOSE 8000
+
+# Health check with timeout and proper failure handling
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Set entrypoint
+ENTRYPOINT ["/entrypoint.sh"]
+
+# Production command with optimal settings
+CMD ["uvicorn", "src.api.main:app", \
+     "--host", "0.0.0.0", \
+     "--port", "8000", \
+     "--workers", "1", \
+     "--worker-class", "uvicorn.workers.UvicornWorker", \
+     "--access-log", \
+     "--log-level", "info"]

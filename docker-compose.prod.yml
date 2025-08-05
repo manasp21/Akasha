@@ -1,0 +1,264 @@
+# Akasha Production Docker Compose
+# Optimized for production deployment with security and performance
+
+version: '3.8'
+
+services:
+  # Backend API Service
+  akasha-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      platforms:
+        - linux/arm64
+    container_name: akasha-api-prod
+    restart: unless-stopped
+    environment:
+      # System Configuration
+      - AKASHA_SYSTEM__ENVIRONMENT=production
+      - AKASHA_SYSTEM__DEBUG=false
+      - AKASHA_SYSTEM__MAX_MEMORY_GB=32
+      
+      # API Configuration
+      - AKASHA_API__HOST=0.0.0.0
+      - AKASHA_API__PORT=8000
+      - AKASHA_API__WORKERS=1
+      - AKASHA_API__CORS_ORIGINS=["http://localhost:3000","https://yourdomain.com"]
+      
+      # Authentication (CRITICAL: Set secure values in production)
+      - AKASHA_AUTH__SECRET_KEY=${JWT_SECRET_KEY:-your-super-secure-jwt-secret-key-change-in-production}
+      - AKASHA_AUTH__ACCESS_TOKEN_EXPIRE_MINUTES=15
+      - AKASHA_AUTH__REFRESH_TOKEN_EXPIRE_DAYS=30
+      - AKASHA_AUTH__DEFAULT_ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
+      - AKASHA_AUTH__DEFAULT_ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+      
+      # Database URLs
+      - REDIS_URL=redis://akasha-redis:6379/0
+      - CHROMA_SERVER_URL=http://akasha-chromadb:8001
+      
+      # LLM Configuration
+      - AKASHA_LLM__BACKEND=mlx
+      - AKASHA_LLM__MODEL_NAME=gemma-3-27b
+      - AKASHA_LLM__QUANTIZATION_BITS=4
+      - AKASHA_LLM__MEMORY_LIMIT_GB=16
+      
+      # Vector Store
+      - AKASHA_VECTOR_STORE__BACKEND=chroma
+      - AKASHA_VECTOR_STORE__MEMORY_LIMIT_GB=8
+      
+      # Security
+      - AKASHA_SECURITY__ENABLE_HTTPS_ONLY=false
+      - AKASHA_AUTH__ENABLE_RATE_LIMITING=true
+      - AKASHA_AUTH__LOGIN_ATTEMPTS_PER_MINUTE=5
+      - AKASHA_AUTH__API_REQUESTS_PER_MINUTE=100
+      
+      # Monitoring
+      - AKASHA_MONITORING__ENABLE_METRICS=true
+      - AKASHA_MONITORING__METRICS_PORT=9090
+      
+      # Python path
+      - PYTHONPATH=/app
+    volumes:
+      # Data persistence (production volumes)
+      - akasha-data:/app/data
+      - akasha-logs:/app/logs
+      - akasha-models:/app/models
+      - akasha-uploads:/app/uploads
+      
+      # Configuration (read-only)
+      - ./config:/app/config:ro
+    ports:
+      - "8000:8000"  # API port
+      - "9090:9090"  # Metrics port
+    depends_on:
+      - akasha-redis  
+      - akasha-chromadb
+    networks:
+      - akasha-network
+    deploy:
+      resources:
+        limits:
+          memory: 20G  # Generous limit for LLM + embeddings
+        reservations:
+          memory: 8G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Frontend Service
+  akasha-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      platforms:
+        - linux/arm64
+    container_name: akasha-frontend-prod
+    restart: unless-stopped
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+      - NODE_ENV=production
+    ports:
+      - "3000:3000"
+    depends_on:
+      - akasha-api
+    networks:
+      - akasha-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis Cache Service
+  akasha-redis:
+    image: redis:7-alpine
+    container_name: akasha-redis-prod
+    restart: unless-stopped
+    command: >
+      redis-server 
+      --appendonly yes 
+      --maxmemory 1gb 
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+    volumes:
+      - akasha-redis-data:/data
+    networks:
+      - akasha-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ChromaDB Vector Database
+  akasha-chromadb:
+    image: chromadb/chroma:latest
+    container_name: akasha-chromadb-prod
+    restart: unless-stopped
+    environment:
+      - CHROMA_SERVER_HOST=0.0.0.0
+      - CHROMA_SERVER_HTTP_PORT=8000
+      - CHROMA_SERVER_GRPC_PORT=8001
+      - ANONYMIZED_TELEMETRY=false
+    volumes:
+      - akasha-chroma-data:/chroma/chroma
+    ports:
+      - "8001:8000"  # HTTP API
+    networks:
+      - akasha-network
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nginx Reverse Proxy (Optional - for advanced deployments)
+  nginx:
+    image: nginx:1.24-alpine
+    container_name: akasha-nginx-prod
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./docker/nginx/ssl:/etc/nginx/ssl:ro  # SSL certificates (if available)
+    depends_on:
+      - akasha-frontend
+      - akasha-api
+    networks:
+      - akasha-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+    profiles:
+      - nginx  # Only start with --profile nginx
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Monitoring Service (Prometheus - Optional)  
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: akasha-prometheus-prod
+    restart: unless-stopped
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - akasha-prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    networks:
+      - akasha-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    profiles:
+      - monitoring  # Only start with --profile monitoring
+
+networks:
+  akasha-network:
+    driver: bridge
+    name: akasha-prod-network
+
+volumes:
+  # Persistent data volumes
+  akasha-data:
+    driver: local
+    name: akasha-prod-data
+  akasha-logs:
+    driver: local  
+    name: akasha-prod-logs
+  akasha-models:
+    driver: local
+    name: akasha-prod-models
+  akasha-uploads:
+    driver: local
+    name: akasha-prod-uploads
+  akasha-redis-data:
+    driver: local
+    name: akasha-prod-redis
+  akasha-chroma-data:
+    driver: local
+    name: akasha-prod-chroma
+  akasha-prometheus-data:
+    driver: local
+    name: akasha-prod-prometheus

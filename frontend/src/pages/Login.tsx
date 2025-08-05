@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Card,
@@ -10,67 +10,122 @@ import {
   InputAdornment,
   IconButton,
   Divider,
+  CircularProgress,
+  Link,
 } from '@mui/material';
 import {
   Visibility,
   VisibilityOff,
-  AccountCircle,
+  Email,
   Lock,
+  Login as LoginIcon,
 } from '@mui/icons-material';
-import { useNavigate } from 'react-router-dom';
-import { useAuthStore } from '../store/authStore';
-import { useAppStore } from '../store/appStore';
+import { useNavigate, useLocation } from 'react-router-dom';
+import authService from '../services/authService';
+
+interface LoginForm {
+  email: string;
+  password: string;
+}
 
 export const Login: React.FC = () => {
   const navigate = useNavigate();
-  const { login, isLoading, error, clearError } = useAuthStore();
-  const { addNotification } = useAppStore();
-
-  const [formData, setFormData] = useState({
-    username: '',
+  const location = useLocation();
+  
+  const [form, setForm] = useState<LoginForm>({
+    email: '',
     password: '',
   });
+  
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showRegister, setShowRegister] = useState(false);
 
-  const handleInputChange = (field: string) => (event: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData(prev => ({
+  // Check if user is already authenticated
+  useEffect(() => {
+    if (authService.isAuthenticated()) {
+      const from = (location.state as any)?.from?.pathname || '/';
+      navigate(from, { replace: true });
+    }
+  }, [navigate, location]);
+
+  const handleInputChange = (field: keyof LoginForm) => (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    setForm(prev => ({
       ...prev,
       [field]: event.target.value,
     }));
-    
     // Clear error when user starts typing
-    if (error) {
-      clearError();
-    }
+    if (error) setError(null);
   };
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     
-    if (!formData.username || !formData.password) {
+    if (!form.email || !form.password) {
+      setError('Please fill in all fields');
       return;
     }
 
+    setLoading(true);
+    setError(null);
+
     try {
-      await login(formData.username, formData.password);
-      
-      addNotification({
-        type: 'success',
-        title: 'Login Successful',
-        message: 'Welcome back to Akasha!',
+      await authService.login({
+        email: form.email,
+        password: form.password,
       });
-      
-      navigate('/');
-    } catch (err) {
-      // Error is handled by the auth store
-      console.error('Login failed:', err);
+
+      // Redirect to intended page or dashboard
+      const from = (location.state as any)?.from?.pathname || '/';
+      navigate(from, { replace: true });
+    } catch (err: any) {
+      setError(err.message || 'Login failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRegisterSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    
+    if (!form.email || !form.password) {
+      setError('Please fill in all fields');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      await authService.register({
+        email: form.email,
+        full_name: form.email.split('@')[0], // Use email prefix as default name
+        password: form.password,
+        role: 'user',
+      });
+
+      // Auto-login after registration
+      await authService.login({
+        email: form.email,
+        password: form.password,
+      });
+
+      const from = (location.state as any)?.from?.pathname || '/';
+      navigate(from, { replace: true });
+    } catch (err: any) {
+      setError(err.message || 'Registration failed');
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleDemoLogin = () => {
-    setFormData({
-      username: 'demo@akasha.ai',
-      password: 'demo123',
+    setForm({
+      email: 'admin@example.com',
+      password: 'admin123',
     });
   };
 
@@ -93,63 +148,60 @@ export const Login: React.FC = () => {
         }}
       >
         <CardContent sx={{ p: 4 }}>
-          {/* Logo/Brand */}
-          <Box sx={{ textAlign: 'center', mb: 4 }}>
-            <Typography
-              variant="h4"
-              component="h1"
-              sx={{
-                fontWeight: 'bold',
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                backgroundClip: 'text',
-                textFillColor: 'transparent',
-                WebkitBackgroundClip: 'text',
-                WebkitTextFillColor: 'transparent',
-                mb: 1,
-              }}
-            >
-              Akasha
+          <Box sx={{ textAlign: 'center', mb: 3 }}>
+            <Typography variant="h4" gutterBottom sx={{ fontWeight: 600 }}>
+              {showRegister ? 'Create Account' : 'Welcome Back'}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              Multimodal RAG System
+              {showRegister 
+                ? 'Sign up to access Akasha' 
+                : 'Sign in to your Akasha account'
+              }
             </Typography>
           </Box>
 
-          {/* Error Alert */}
           {error && (
-            <Alert severity="error" sx={{ mb: 3 }}>
+            <Alert severity="error" sx={{ mb: 2 }}>
               {error}
             </Alert>
           )}
 
-          {/* Login Form */}
-          <Box component="form" onSubmit={handleSubmit}>
+          <Box
+            component="form"
+            onSubmit={showRegister ? handleRegisterSubmit : handleSubmit}
+            sx={{ width: '100%' }}
+          >
             <TextField
               fullWidth
-              label="Username or Email"
-              value={formData.username}
-              onChange={handleInputChange('username')}
+              label="Email Address"
+              type="email"
+              value={form.email}
+              onChange={handleInputChange('email')}
+              disabled={loading}
+              required
+              sx={{ mb: 2 }}
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
-                    <AccountCircle color="action" />
+                    <Email />
                   </InputAdornment>
                 ),
               }}
-              sx={{ mb: 3 }}
-              required
             />
 
             <TextField
               fullWidth
               label="Password"
               type={showPassword ? 'text' : 'password'}
-              value={formData.password}
+              value={form.password}
               onChange={handleInputChange('password')}
+              disabled={loading}
+              required
+              sx={{ mb: 3 }}
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
-                    <Lock color="action" />
+                    <Lock />
                   </InputAdornment>
                 ),
                 endAdornment: (
@@ -163,8 +215,6 @@ export const Login: React.FC = () => {
                   </InputAdornment>
                 ),
               }}
-              sx={{ mb: 3 }}
-              required
             />
 
             <Button
@@ -172,14 +222,23 @@ export const Login: React.FC = () => {
               fullWidth
               variant="contained"
               size="large"
-              disabled={isLoading || !formData.username || !formData.password}
+              disabled={loading}
+              startIcon={loading ? <CircularProgress size={20} /> : <LoginIcon />}
               sx={{
-                py: 1.5,
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                 mb: 2,
+                py: 1.5,
+                background: 'linear-gradient(45deg, #667eea 30%, #764ba2 90%)',
+                '&:hover': {
+                  background: 'linear-gradient(45deg, #5a6fd8 30%, #6a4190 90%)',
+                },
               }}
             >
-              {isLoading ? 'Signing In...' : 'Sign In'}
+              {loading 
+                ? 'Please wait...' 
+                : showRegister 
+                  ? 'Create Account' 
+                  : 'Sign In'
+              }
             </Button>
 
             <Divider sx={{ my: 2 }}>
@@ -192,18 +251,44 @@ export const Login: React.FC = () => {
               fullWidth
               variant="outlined"
               onClick={handleDemoLogin}
-              disabled={isLoading}
+              disabled={loading}
+              sx={{ mb: 2 }}
             >
               Try Demo Account
             </Button>
+
+            <Box sx={{ textAlign: 'center' }}>
+              <Typography variant="body2">
+                {showRegister ? 'Already have an account?' : "Don't have an account?"}{' '}
+                <Link
+                  component="button"
+                  type="button"
+                  variant="body2"
+                  onClick={() => {
+                    setShowRegister(!showRegister);
+                    setError(null);
+                  }}
+                  sx={{ fontWeight: 600 }}
+                >
+                  {showRegister ? 'Sign In' : 'Sign Up'}
+                </Link>
+              </Typography>
+            </Box>
           </Box>
 
-          {/* Footer */}
-          <Box sx={{ textAlign: 'center', mt: 4 }}>
-            <Typography variant="caption" color="text.secondary">
-              Akasha v1.0.0 - Intelligent Document Processing
-            </Typography>
-          </Box>
+          {process.env.NODE_ENV === 'development' && (
+            <Box sx={{ mt: 3, p: 2, bgcolor: 'grey.100', borderRadius: 1 }}>
+              <Typography variant="caption" display="block" gutterBottom>
+                Development Mode - Demo Credentials:
+              </Typography>
+              <Typography variant="caption" display="block">
+                Email: admin@example.com
+              </Typography>
+              <Typography variant="caption" display="block">
+                Password: admin123
+              </Typography>
+            </Box>
+          )}
         </CardContent>
       </Card>
     </Box>

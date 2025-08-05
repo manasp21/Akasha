@@ -24,6 +24,8 @@ from ..core.logging import (
     log_api_request
 )
 from ..core.exceptions import AkashaError
+from .auth import router as auth_router
+from .middleware import setup_security_middleware
 
 
 # Global logger
@@ -75,8 +77,9 @@ def create_app() -> FastAPI:
         lifespan=lifespan
     )
     
-    # Add middleware
+    # Add middleware (order matters - last added is first executed)
     setup_middleware(app, config)
+    setup_security_middleware(app, config)
     
     # Add error handlers
     setup_error_handlers(app)
@@ -283,6 +286,9 @@ def setup_error_handlers(app: FastAPI) -> None:
 
 def setup_routes(app: FastAPI) -> None:
     """Set up routes for the FastAPI application."""
+    
+    # Include authentication routes
+    app.include_router(auth_router)
     
     @app.get("/")
     async def root():

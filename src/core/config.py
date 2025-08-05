@@ -159,14 +159,82 @@ class LoggingConfig(BaseModel):
         return v.upper()
 
 
-class SecurityConfig(BaseModel):
-    """Security configuration."""
+class AuthConfig(BaseModel):
+    """Authentication and authorization configuration."""
     
-    jwt_secret_key: str = Field(default="dev-secret-key-change-in-production", description="JWT secret key")
-    jwt_algorithm: str = Field(default="HS256", description="JWT algorithm")
-    jwt_expire_minutes: int = Field(default=30, description="JWT expiration in minutes")
+    # JWT Configuration
+    secret_key: str = Field(
+        default="dev-secret-key-change-in-production-please", 
+        description="JWT secret key - MUST be changed in production"
+    )
+    algorithm: str = Field(default="HS256", description="JWT algorithm")
+    access_token_expire_minutes: int = Field(default=15, description="Access token expiration in minutes")
+    refresh_token_expire_days: int = Field(default=30, description="Refresh token expiration in days")
+    
+    # Password Configuration
+    password_min_length: int = Field(default=8, description="Minimum password length")
+    password_max_length: int = Field(default=100, description="Maximum password length")
+    bcrypt_rounds: int = Field(default=12, description="Bcrypt hashing rounds")
+    
+    # Rate Limiting
+    enable_rate_limiting: bool = Field(default=True, description="Enable API rate limiting")
+    login_attempts_per_minute: int = Field(default=5, description="Max login attempts per minute per IP")
+    api_requests_per_minute: int = Field(default=100, description="Max API requests per minute per user")
+    
+    # Session Management
+    max_sessions_per_user: int = Field(default=5, description="Maximum concurrent sessions per user")
+    session_cleanup_interval: int = Field(default=3600, description="Session cleanup interval in seconds")
+    
+    # Default Admin User (for initial setup)
+    default_admin_email: str = Field(default="admin@example.com", description="Default admin email")
+    default_admin_password: str = Field(default="admin123", description="Default admin password - CHANGE IN PRODUCTION")
+    create_default_admin: bool = Field(default=True, description="Create default admin user on startup")
+    
+    # Security Headers
+    enable_security_headers: bool = Field(default=True, description="Enable security headers")
+    cors_max_age: int = Field(default=86400, description="CORS max age in seconds")
+    
+    @field_validator("secret_key")
+    @classmethod
+    def validate_secret_key(cls, v):
+        if len(v) < 32:
+            raise ValueError("JWT secret key must be at least 32 characters long")
+        return v
+    
+    @field_validator("algorithm")
+    @classmethod
+    def validate_algorithm(cls, v):
+        valid_algorithms = ["HS256", "HS384", "HS512", "RS256", "RS384", "RS512"]
+        if v not in valid_algorithms:
+            raise ValueError(f"JWT algorithm must be one of {valid_algorithms}")
+        return v
+
+class SecurityConfig(BaseModel):
+    """General security configuration."""
+    
+    # API Security
     api_key_length: int = Field(default=32, description="API key length")
-    bcrypt_rounds: int = Field(default=12, description="Bcrypt rounds")
+    enable_https_only: bool = Field(default=False, description="Force HTTPS only")
+    
+    # Input Validation
+    max_request_size_mb: int = Field(default=100, description="Maximum request size in MB")
+    max_upload_files: int = Field(default=10, description="Maximum files per upload")
+    
+    # Content Security
+    allowed_file_types: List[str] = Field(
+        default=["pdf", "txt", "md", "docx", "html"],
+        description="Allowed file types for upload"
+    )
+    scan_uploads: bool = Field(default=True, description="Enable upload scanning")
+    
+    # Database Security
+    enable_sql_logging: bool = Field(default=False, description="Enable SQL query logging")
+    
+    @field_validator("allowed_file_types")
+    @classmethod
+    def validate_file_types(cls, v):
+        # Convert to lowercase for consistency
+        return [ft.lower() for ft in v]
 
 
 class PluginConfig(BaseModel):
@@ -204,6 +272,7 @@ class AkashaConfig(BaseSettings):
     ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    auth: AuthConfig = Field(default_factory=AuthConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     plugins: PluginConfig = Field(default_factory=PluginConfig)
     monitoring: MonitoringConfig = Field(default_factory=MonitoringConfig)
